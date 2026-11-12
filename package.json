@@ -1,6 +1,6 @@
 {
   "name": "calandria-cli",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Command-line client for Calandria: run and watch coding-agent tasks from the terminal.",
   "license": "Apache-2.0",
   "type": "module",
