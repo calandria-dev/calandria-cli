@@ -43,6 +43,9 @@ export async function startFakeServer(opts: { token?: string } = {}) {
     decided: undefined as string[][] | undefined,
     movedTo: undefined as string | undefined,
     worktreePreview: false,
+    /** "finished": the turn is over before any watcher attaches. "late": it begins after the snapshot. */
+    mode: "live" as "live" | "finished" | "late",
+    extra: [] as unknown[],
   };
   const projects = [
     { id: "projAAAA1111", name: "Demo", repo_path: "/r/demo", branch: "main", default_agent: "claude", awaiting_count: 0 },
@@ -65,7 +68,7 @@ export async function startFakeServer(opts: { token?: string } = {}) {
     created_at: 1,
     content: JSON.stringify({ title: "Run npm test", permission: { request: permissionCard } }),
   });
-  const detail = () => ({ ...state.task, depends_on: [], tag_ids: [], messages: state.cardPending ? [cardMessage()] : [] });
+  const detail = () => ({ ...state.task, depends_on: [], tag_ids: [], messages: [...state.extra, ...(state.cardPending ? [cardMessage()] : [])] });
 
   const send = (res: http.ServerResponse, status: number, body: unknown) => {
     res.writeHead(status, { "content-type": "application/json" });
@@ -138,6 +141,10 @@ export async function startFakeServer(opts: { token?: string } = {}) {
           state.task.running = 1;
           state.task.started = 1;
           state.task.status = "in_progress";
+          if (state.mode === "finished") {
+            state.task.running = 0;
+            state.extra.push({ id: "e1", generation: 1, role: "user", created_at: 1, content: "Begin" }, { id: "e2", generation: 1, role: "assistant", created_at: 2, content: "All done quickly." });
+          } else if (state.mode === "late") state.task.running = 0;
           return send(res, 202, { ok: true, generation: 1 });
         }
         return send(res, 202, { ok: true, queued: true });
@@ -145,9 +152,17 @@ export async function startFakeServer(opts: { token?: string } = {}) {
       if (sub === "messages" && m === "GET") {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write(": ping\r\n\r\n");
-        frame(res, { type: "snapshot", messages: state.cardPending ? [cardMessage()] : [], pending: [], running: !!state.task.running });
+        frame(res, { type: "snapshot", messages: [...state.extra, ...(state.cardPending ? [cardMessage()] : [])], pending: [], running: !!state.task.running });
         streams.add(res);
         req.on("close", () => streams.delete(res));
+        if (state.mode === "late") {
+          setTimeout(() => {
+            frame(res, { type: "user", content: "Begin", msgId: "u1" });
+            frame(res, { type: "assistant", content: "Late but visible." });
+            frame(res, { type: "turn_end" });
+          }, 100);
+          return;
+        }
         if (state.task.running && !state.cardPending && !state.decided) {
           setTimeout(() => {
             frame(res, { type: "user", content: "Begin", msgId: "u1" });

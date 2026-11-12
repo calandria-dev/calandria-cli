@@ -3,7 +3,7 @@ import { answerFor, pendingCards, webOnlyReason, type AnswerFlags, type Card } f
 import { bold, cyan, dim, green, red, yellow } from "../color.js";
 import { makeCtx, prompt, sleepFor, type Ctx, type IO } from "../context.js";
 import { CliError, HttpError, usage } from "../errors.js";
-import { renderCard, truncate } from "../render.js";
+import { renderCard, renderMessage, truncate } from "../render.js";
 import { resolveTask, shortId } from "../resolve.js";
 import type { AskAnswers, GlobalEvent, GlobalTaskEvent, TaskDetail, TaskEvent } from "../types.js";
 
@@ -14,6 +14,13 @@ export interface WatchOptions {
   interactive?: boolean;
   /** Exit 0 as soon as a card needs an answer. */
   exitOnCard?: boolean;
+  /**
+   * Transcript length recorded before a start/send in this invocation. The snapshot renders every message
+   * past it, so a turn that finished before the stream attached is still shown.
+   */
+  since?: number;
+  /** How long to wait for a just-started turn to register when the snapshot shows no new messages. */
+  startWaitMs?: number;
 }
 
 const BACKOFF_MS = [500, 1000, 2000, 4000, 8000, 15000];
@@ -86,15 +93,18 @@ export async function watchTask(ctx: Ctx, taskId: string, opts: WatchOptions): P
     return undefined;
   };
 
-  const handle = async (ev: TaskEvent): Promise<"exit" | undefined> => {
+  const handle = async (ev: TaskEvent): Promise<"exit" | "wait" | undefined> => {
     switch (ev.type) {
       case "snapshot": {
         const e = ev as Extract<TaskEvent, { type: "snapshot" }>;
+        const fresh = opts.since === undefined ? [] : e.messages.slice(Math.min(opts.since, e.messages.length));
+        for (const m of fresh) line(renderMessage(m));
         let exit: "exit" | undefined;
         for (const card of pendingCards(e.messages)) exit = (await showCard(card)) ?? exit;
         if (exit) return exit;
         if (!e.running && !opts.follow) {
-          line(dim("task is idle (no turn running)"));
+          if (opts.since !== undefined && fresh.length === 0) return "wait";
+          if (fresh.length === 0) line(dim("task is idle (no turn running)"));
           return "exit";
         }
         return undefined;
@@ -172,8 +182,11 @@ export async function watchTask(ctx: Ctx, taskId: string, opts: WatchOptions): P
   const path = `/api/tasks/${encodeURIComponent(taskId)}/messages`;
   let failures = 0;
   for (;;) {
+    const ac = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let idleTimedOut = false;
     try {
-      for await (const msg of ctx.client.stream(path)) {
+      for await (const msg of ctx.client.stream(path, ac.signal)) {
         failures = 0;
         let ev: TaskEvent;
         try {
@@ -181,17 +194,43 @@ export async function watchTask(ctx: Ctx, taskId: string, opts: WatchOptions): P
         } catch {
           continue;
         }
+        // Anything after the snapshot means the turn registered.
+        if (ev.type !== "snapshot" && timer) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+        let verdict: "exit" | "wait" | undefined;
         if (ctx.json) {
           io.out(`${msg.data.replace(/\n/g, "")}\n`);
-          if (ev.type === "turn_end" || ev.type === "done") if (!opts.follow) return sawError ? 1 : 0;
-          if (ev.type === "snapshot" && !(ev as { running: boolean }).running && !opts.follow) return 0;
-          continue;
+          if (ev.type === "turn_end" || ev.type === "done") {
+            if (!opts.follow) return sawError ? 1 : 0;
+          } else if (ev.type === "snapshot" && !(ev as { running: boolean }).running && !opts.follow) {
+            const msgs = (ev as { messages: unknown[] }).messages;
+            verdict = opts.since !== undefined && msgs.length <= opts.since ? "wait" : "exit";
+          }
+        } else {
+          verdict = await handle(ev);
         }
-        if ((await handle(ev)) === "exit") return sawError ? 1 : 0;
+        if (verdict === "exit") return sawError ? 1 : 0;
+        if (verdict === "wait") {
+          timer = setTimeout(() => {
+            idleTimedOut = true;
+            ac.abort();
+          }, opts.startWaitMs ?? 5000);
+        }
       }
     } catch (e) {
+      if (idleTimedOut) {
+        if (!ctx.json) line(dim("task is idle (no turn started)"));
+        return 0;
+      }
       if (e instanceof HttpError) throw e;
       if (!(e instanceof CliError) && !(e instanceof TypeError) && (e as Error).name !== "AbortError" && !/terminated|fetch failed|ECONN|socket|network/i.test(String((e as Error)?.message))) throw e;
+    }
+    if (timer) clearTimeout(timer);
+    if (idleTimedOut) {
+      if (!ctx.json) line(dim("task is idle (no turn started)"));
+      return 0;
     }
     failures++;
     if (failures > MAX_FAILURES) throw new CliError(`lost the connection to ${ctx.client.baseUrl} and could not reconnect`, 3);

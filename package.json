@@ -4,23 +4,41 @@
   "description": "Command-line client for Calandria: run and watch coding-agent tasks from the terminal.",
   "license": "Apache-2.0",
   "type": "module",
-  "bin": { "calandria": "dist/cli.js" },
-  "files": ["dist"],
-  "engines": { "node": ">=20" },
-  "repository": { "type": "git", "url": "git+https://github.com/calandria-dev/calandria-cli.git" },
+  "bin": {
+    "calandria": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/calandria-dev/calandria-cli.git"
+  },
   "homepage": "https://github.com/calandria-dev/calandria-cli",
-  "bugs": { "url": "https://github.com/calandria-dev/calandria-cli/issues" },
-  "keywords": ["calandria", "cli", "coding-agent"],
+  "bugs": {
+    "url": "https://github.com/calandria-dev/calandria-cli/issues"
+  },
+  "keywords": [
+    "calandria",
+    "cli",
+    "coding-agent"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/postbuild.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
-  "dependencies": { "commander": "^12.1.0" },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "typescript": "^5.5.0",
-    "vitest": "^2.1.0"
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
   }
 }

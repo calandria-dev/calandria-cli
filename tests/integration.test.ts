@@ -148,6 +148,55 @@ describe("end to end against a fake Calandria", () => {
   });
 });
 
+describe("watch after start or send", () => {
+  it("renders a turn that finished before the stream attached", async () => {
+    srv.state.mode = "finished";
+    await cli(["--url", srv.url, "new", "T", "--project", "Demo"]);
+    const r = await cli(["--url", srv.url, "start", srv.TASK_ID, "--watch"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("All done quickly.");
+    expect(r.out).not.toContain("task is idle");
+  });
+
+  it("renders a turn that begins after the snapshot", async () => {
+    srv.state.mode = "late";
+    await cli(["--url", srv.url, "new", "T", "--project", "Demo"]);
+    const r = await cli(["--url", srv.url, "start", srv.TASK_ID, "--watch"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Late but visible.");
+  });
+
+  it("send --watch shows only messages newer than the send", async () => {
+    srv.state.mode = "finished";
+    await cli(["--url", srv.url, "new", "T", "--project", "Demo", "--start"]);
+    srv.state.extra.push({ id: "e3", generation: 1, role: "assistant", created_at: 3, content: "follow-up reply" });
+    const before = srv.state.extra.length;
+    expect(before).toBeGreaterThan(0);
+    const r = await cli(["--url", srv.url, "send", srv.TASK_ID, "next", "--watch"]);
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("All done quickly.");
+  });
+
+  it("reports idle after the wait when no turn registers", async () => {
+    await cli(["--url", srv.url, "new", "T", "--project", "Demo", "--start"]);
+    srv.state.task.running = 0;
+    srv.state.task.started = 1;
+    const { watchTask } = await import("../src/commands/watch.js");
+    const { makeIO } = await import("./helpers.js");
+    const { Client } = await import("../src/client.js");
+    const h = makeIO();
+    const ctx = { client: new Client({ url: srv.url, source: "t" }), io: h.io, json: false, println: () => {}, emit: () => false };
+    expect(await watchTask(ctx, srv.TASK_ID, { since: 0, startWaitMs: 150 })).toBe(0);
+    expect(h.out()).toContain("idle");
+  });
+
+  it("plain watch on an idle task still says idle immediately", async () => {
+    await cli(["--url", srv.url, "new", "T", "--project", "Demo"]);
+    const r = await cli(["--url", srv.url, "watch", srv.TASK_ID]);
+    expect(r.out).toContain("task is idle");
+  });
+});
+
 describe("error reporting", () => {
   it("maps a rejected token to a clear message", async () => {
     const guarded = await startFakeServer({ token: "right" });

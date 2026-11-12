@@ -12,7 +12,7 @@ import { watchTask } from "./watch.js";
 export const getTask = (ctx: Ctx, id: string): Promise<TaskDetail> => ctx.client.get<TaskDetail>(`/api/tasks/${encodeURIComponent(id)}`);
 
 /** Starts a task's first turn. A suggested task is accepted first. */
-export async function startTask(ctx: Ctx, id: string): Promise<Task> {
+export async function startTask(ctx: Ctx, id: string): Promise<TaskDetail> {
   const task = await getTask(ctx, id);
   if (task.started || task.running) throw usage(`task ${shortId(id)} is already ${task.running ? "running" : "started"}. Use \`calandria send ${shortId(id)} <text>\` to message it.`);
   if (task.suggested) await ctx.client.patch(`/api/tasks/${encodeURIComponent(id)}`, { suggested: 0 });
@@ -98,7 +98,7 @@ export function registerTasks(program: Command, io: IO): void {
       if (!ctx.json || !o.watch) {
         if (!ctx.emit({ ...task, started_now: start })) ctx.println(`Created ${green(shortId(task.id))} in ${project.name}: ${task.title}${start ? " (started)" : ""}`);
       }
-      if (o.watch) process.exitCode = await watchTask(ctx, task.id, {});
+      if (o.watch) process.exitCode = await watchTask(ctx, task.id, { since: 0 });
     });
 
   program
@@ -110,7 +110,7 @@ export function registerTasks(program: Command, io: IO): void {
       const id = await resolveTask(ctx.client, ref);
       const t = await startTask(ctx, id);
       if (!ctx.emit({ id, started: true })) ctx.println(`Started ${shortId(id)}: ${t.title}`);
-      if (o.watch) process.exitCode = await watchTask(ctx, id, {});
+      if (o.watch) process.exitCode = await watchTask(ctx, id, { since: t.messages.length });
     });
 
   program
@@ -126,7 +126,7 @@ export function registerTasks(program: Command, io: IO): void {
       if (!task.started && !task.running) throw usage(`task ${shortId(id)} has not started. Run \`calandria start ${shortId(id)}\` first.`);
       const res = await ctx.client.post<{ ok?: boolean; sent?: boolean; queued?: boolean }>(`/api/tasks/${encodeURIComponent(id)}/messages`, { text });
       if (!ctx.emit(res)) ctx.println(res?.queued ? "Queued behind the running turn." : res?.sent ? "Sent to the lingering session." : "Sent.");
-      if (o.watch) process.exitCode = await watchTask(ctx, id, {});
+      if (o.watch) process.exitCode = await watchTask(ctx, id, { since: task.messages.length });
     });
 
   program
